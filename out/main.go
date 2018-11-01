@@ -10,20 +10,27 @@ import (
 
 	"github.com/arbourd/concourse-slack-alert-resource/concourse"
 	"github.com/arbourd/concourse-slack-alert-resource/slack"
+	"regexp"
+	"strings"
 	"io/ioutil"
 )
 
 const PutBasePath      = "/tmp/build/put/"
 
 func buildMessage(alert Alert, m concourse.BuildMetadata) *slack.Message {
+	re := regexp.MustCompile(`{%\s*[^{%}]+\s*%}`)
+	message := re.ReplaceAllStringFunc(alert.Message, func(match string) string {
+		path := strings.Trim(match, " {%}")
 
-	message := alert.Message
-	if exists(PutBasePath + message) {
-		data, err := ioutil.ReadFile(PutBasePath + message)
-		if err == nil {
-			message = string(data)
+		if exists(PutBasePath + path) {
+			data, err := ioutil.ReadFile(PutBasePath + path)
+			if err == nil {
+				return strings.TrimSpace(string(data))
+			}
 		}
-	}
+
+		return match
+	})
 
 	fallback := fmt.Sprintf("%s -- %s", fmt.Sprintf("%s/%s: %s ", m.PipelineName, m.JobName, message), m.URL)
 	attachment := slack.Attachment{
@@ -45,12 +52,10 @@ func buildMessage(alert Alert, m concourse.BuildMetadata) *slack.Message {
 
 func exists(path string) bool {
 	_, err := os.Stat(path)
-	if err == nil {
-		return true
-	}
-	if os.IsNotExist(err) {
+	if err != nil || os.IsNotExist(err) {
 		return false
 	}
+
 	return true
 }
 
