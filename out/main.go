@@ -10,31 +10,53 @@ import (
 
 	"github.com/arbourd/concourse-slack-alert-resource/concourse"
 	"github.com/arbourd/concourse-slack-alert-resource/slack"
+	"regexp"
+	"strings"
+	"io/ioutil"
 )
 
+const PutBasePath      = "/tmp/build/put/"
+
 func buildMessage(alert Alert, m concourse.BuildMetadata) *slack.Message {
-	fallback := fmt.Sprintf("%s -- %s", fmt.Sprintf("%s: %s/%s/%s", alert.Message, m.PipelineName, m.JobName, m.BuildName), m.URL)
+	re := regexp.MustCompile(`{%\s*[^{%}]+\s*%}`)
+	message := re.ReplaceAllStringFunc(alert.Message, func(match string) string {
+		path := strings.Trim(match, " {%}")
+
+		if exists(PutBasePath + path) {
+			data, err := ioutil.ReadFile(PutBasePath + path)
+			if err == nil {
+				return strings.TrimSpace(string(data))
+			}
+		}
+
+		return match
+	})
+
+	fallback := fmt.Sprintf("%s -- %s", fmt.Sprintf("%s/%s: %s ", m.PipelineName, m.JobName, message), m.URL)
 	attachment := slack.Attachment{
 		Fallback:   fallback,
-		AuthorName: alert.Message,
 		Color:      alert.Color,
 		Footer:     m.URL,
 		FooterIcon: alert.IconURL,
 		Fields: []slack.Field{
 			slack.Field{
-				Title: "Job",
-				Value: fmt.Sprintf("%s/%s", m.PipelineName, m.JobName),
-				Short: true,
-			},
-			slack.Field{
-				Title: "Build",
-				Value: m.BuildName,
-				Short: true,
+				Title: fmt.Sprintf("%s/%s", m.PipelineName, m.JobName),
+				Value: message,
+				Short: false,
 			},
 		},
 	}
 
 	return &slack.Message{Attachments: []slack.Attachment{attachment}, Channel: alert.Channel}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	if err != nil || os.IsNotExist(err) {
+		return false
+	}
+
+	return true
 }
 
 func previousBuildStatus(input *concourse.OutRequest, m concourse.BuildMetadata) (string, error) {
